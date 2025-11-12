@@ -1,0 +1,37 @@
+# ==========================================
+# === ARCHIVOS TEMPORALES DE ECLIPSE ===
+# ==========================================
+.classpath
+.project
+.settings/
+.metadata/
+.recommenders/
+
+# ==========================================
+# === ARCHIVOS DE COMPILACIÓN JAVA ===
+# ==========================================
+bin/
+target/
+*.class
+*.log
+
+# ==========================================
+# === ARCHIVOS TEMPORALES DEL SISTEMA ===
+# ==========================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==========================================
+# === CONFIGURACIONES PERSONALES ===
+# ==========================================
+.idea/
+*.iml
+.vscode/
+
+# ==========================================
+# === OTROS ARCHIVOS TEMPORALES ===
+# ==========================================
+*.tmp
+*.bak
+*.swp
