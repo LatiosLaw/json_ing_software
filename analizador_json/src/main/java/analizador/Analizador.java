@@ -10,12 +10,12 @@ import java.util.Map.Entry;
 
 public class Analizador {
 
-    // 🔹 Rutas fijas (ajustar según tu entorno)
+    // Rutas fijas (ajustar según tu entorno)
     private static final String LOG_FILE_PATH = "C:/Users/Law/Downloads/simulator.json.log";
     private static final String CONFIG_FILE_PATH = "C:/Users/Law/Downloads/simulation_config.json";
     private static final String HTTP_LOG_FILE_PATH = "C:/Users/Law/Downloads/simulator-access.json.log";
 
-    private static final double RANGE = 0.5; // ±0.5 °C
+    private static final double RANGE = 0.5;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static class RoomStats {
@@ -27,7 +27,14 @@ public class Analizador {
         double minTemp = Double.POSITIVE_INFINITY;
         double maxTemp = Double.NEGATIVE_INFINITY;
         int userInteractions = 0;
+        int lowTicks = 0;
+        int highTicks = 0;
+        double lastLowKWh = 0;
+        double lastHighKWh = 0;
+        double totalLowKWh = 0;
+        double totalHighKWh = 0;
     }
+
 
     public static void main(String[] args) {
         Path logPath = Paths.get(LOG_FILE_PATH);
@@ -35,11 +42,11 @@ public class Analizador {
         Path httpPath = Paths.get(HTTP_LOG_FILE_PATH);
 
         if (!Files.exists(logPath)) {
-            System.err.println("❌ Archivo de log no encontrado: " + logPath.toAbsolutePath());
+            System.err.println("Archivo de log no encontrado: " + logPath.toAbsolutePath());
             return;
         }
         if (!Files.exists(configPath)) {
-            System.err.println("❌ Archivo de configuración no encontrado: " + configPath.toAbsolutePath());
+            System.err.println("Archivo de configuración no encontrado: " + configPath.toAbsolutePath());
             return;
         }
 
@@ -47,7 +54,7 @@ public class Analizador {
         double maxEnergyKWh = 0;
 
         // ===============================================================
-        // 1️⃣ Leer configuración
+        // 1️ Leer configuración
         // ===============================================================
         try {
             JsonNode root = MAPPER.readTree(configPath.toFile());
@@ -79,7 +86,7 @@ public class Analizador {
         }
 
         // ===============================================================
-        // 2️⃣ Procesar log del simulador
+        // 2️ Procesar log del simulador
         // ===============================================================
         int totalLines = 0, validJson = 0;
         Map<Long, Set<Integer>> roomsOnAtTime = new HashMap<>();
@@ -113,6 +120,22 @@ public class Analizador {
 
                         if (root.has("energy_Wh"))
                             st.lastEnergyWh = root.get("energy_Wh").asDouble();
+
+                        // ⭐ NUEVO: Contar ticks de tarifa baja y alta
+                        double low = root.has("lowKWh") ? root.get("lowKWh").asDouble() : st.lastLowKWh;
+                        double high = root.has("highKWh") ? root.get("highKWh").asDouble() : st.lastHighKWh;
+
+                        if (heaterOn) {
+                            if (low > st.lastLowKWh) st.lowTicks++;
+                            if (high > st.lastHighKWh) st.highTicks++;
+                        }
+
+                        st.lastLowKWh = low;
+                        st.lastHighKWh = high;
+                        
+                        st.totalLowKWh = low;
+                        st.totalHighKWh = high;
+
 
                         if (root.has("simTimeMs")) {
                             long simTime = root.get("simTimeMs").asLong();
@@ -153,7 +176,6 @@ public class Analizador {
                         if (path.startsWith("/switch/") && !timestamp.isEmpty()) {
                             String key = path + "|" + timestamp;
                             if (uniqueRequests.add(key)) {
-                                // Ej: "/switch/2" -> roomId = 2
                                 String[] parts = path.split("/");
                                 int roomId = Integer.parseInt(parts[2]);
                                 RoomStats st = statsByRoom.computeIfAbsent(roomId, k -> new RoomStats());
@@ -202,6 +224,9 @@ public class Analizador {
                 peakKWh, peakKWh, maxEnergyKWh,
                 (maxEnergyKWh > 0 ? (peakKWh / maxEnergyKWh * 100.0) : 0));
 
+        // ===============================================================
+        // 6️⃣ Reporte por room
+        // ===============================================================
         for (Entry<Integer, RoomStats> entry : statsByRoom.entrySet()) {
             int roomId = entry.getKey();
             RoomStats st = entry.getValue();
@@ -218,6 +243,10 @@ public class Analizador {
             double pctHeaterOn = (st.heaterOnCount * 100.0 / total);
             double energyKWh = st.lastEnergyWh / 1000.0;
 
+            long tariffTicks = st.lowTicks + st.highTicks;
+            double pctLow = tariffTicks > 0 ? (st.lowTicks * 100.0 / tariffTicks) : 0;
+            double pctHigh = tariffTicks > 0 ? (st.highTicks * 100.0 / tariffTicks) : 0;
+
             System.out.printf(
                     "Room %d:%n" +
                     "  - Esperada: %.1f°C%n" +
@@ -225,11 +254,21 @@ public class Analizador {
                     "  - Dentro del rango esperado: %.1f%% | Debajo: %.1f%% | Encima: %.1f%%%n" +
                     "  - Heater encendido: %.1f%%%n" +
                     "  - Energía acumulada: %.3f kWh%n" +
-                    "  - Interacciones de usuario (POST): %d%n%n",
+                    "  - Interacciones de usuario (POST): %d%n" +
+                    "  - Tarifa baja: %.1f%% (%d ticks)%n" +
+                    "  - Tarifa alta: %.1f%% (%d ticks)%n" +
+                    "  - Consumo total en tarifa baja: %.3f kWh%n" +
+                    "  - Consumo total en tarifa alta: %.3f kWh%n%n",
                     roomId, st.expectedTemp, st.minTemp, st.maxTemp,
                     pctWithin, pctBelow, pctAbove,
-                    pctHeaterOn, energyKWh, st.userInteractions
+                    pctHeaterOn, energyKWh,
+                    st.userInteractions,
+                    pctLow, st.lowTicks,
+                    pctHigh, st.highTicks,
+                    st.totalLowKWh,
+                    st.totalHighKWh
             );
+
         }
     }
 
